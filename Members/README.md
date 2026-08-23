@@ -23,4 +23,4 @@ Batch Day 52-এর সদস্য লিস্ট।
 - ফোন: 
 - ইমেইল: 
 - পজিশন: Lead
-- নোট: BRB, Premier Bank, Sharma House লীড হিসেবে দেখবে
+- নোট: BRB, Premier Bank, Sharma House লীড + Pran goodies পাঠানোর দায়িত্ব (২০২৬-০৮-২৩)
