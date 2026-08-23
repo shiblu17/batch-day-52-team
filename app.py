@@ -5,12 +5,18 @@ Read + write (update sponsor status). Private workspace data excluded.
 """
 import os, re, gradio as gr, time, subprocess
 from google import genai
+from collections import defaultdict
 
 REPO_DIR = os.path.dirname(os.path.abspath(__file__))
 SPONSORS = os.path.join(REPO_DIR, "Sponsors", "README.md")
 LEARNINGS = os.path.join(REPO_DIR, "LEARNINGS.md")
 KEY = os.environ.get("GEMINI_KEY", "")
 client = genai.Client(api_key=KEY) if KEY else None
+
+# simple in-memory cache + per-minute rate guard
+_cache = {}
+_last_call = [0.0]
+MIN_INTERVAL = 2.0  # seconds between API calls to avoid quota burn
 
 SYSTEM = """You are RYUK — the Batch Day 52 team assistant (AI teammate version).
 You ONLY discuss Batch Day 52 data: sponsors, members, schedule, events, documents.
@@ -73,14 +79,25 @@ def parse_update(msg):
     return None
 
 def gemini(prompt):
-    import time
+    # rate guard: avoid hammering quota
+    now = time.time()
+    if now - _last_call[0] < MIN_INTERVAL:
+        time.sleep(MIN_INTERVAL - (now - _last_call[0]))
+    _last_call[0] = time.time()
+    # cache identical prompts
+    if prompt in _cache:
+        return _cache[prompt]
     for i in range(3):
         try:
-            return client.models.generate_content(model="gemini-flash-latest", contents=prompt).text.strip()
+            r = client.models.generate_content(model="gemini-flash-latest", contents=prompt).text.strip()
+            _cache[prompt] = r
+            return r
         except Exception as e:
             if "503" in str(e) and i < 2:
                 time.sleep(4)
                 continue
+            if "429" in str(e):
+                return "⚠️ কোটা শেষ হয়ে গেছে (429)। কিছুক্ষণ পর আবার চেষ্টা করুন, বা নতুন API key দিন।"
             return "⚠️ Gemini এরর: " + str(e)[:120]
     return "⚠️ Gemini রিট্রাই ফেইল।"
 

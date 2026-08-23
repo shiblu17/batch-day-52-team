@@ -13,3 +13,14 @@ Batch Day 52-এর সদস্য লিস্ট।
 
 ## সদস্য লিস্ট
 <!-- Hermes auto-updates -->
+## শিমুল — রোল: টিম মেম্বার
+- ফোন: 
+- ইমেইল: 
+- পজিশন: Member
+- নোট: Reels, Magazine এবং Media wings দেখবে
+
+## রুপন্তী — রোল: লীড
+- ফোন: 
+- ইমেইল: 
+- পজিশন: Lead
+- নোট: BRB, Premier Bank, Sharma House লীড হিসেবে দেখবে
