@@ -1,18 +1,50 @@
 """
-Batch Day 52 Team Hub — RYUK Assistant (Team Version)
-Gradio chat app. Scoped ONLY to batch-day-52-team data.
-Team members can read + update sponsor status. No access to private workspace.
+Batch Day 52 Team Hub — RYUK (Gemini-backed) Assistant
+Team members chat with a real LLM scoped ONLY to Batch Day 52 data.
+Read + write (update sponsor status). Private workspace data excluded.
 """
-import os, re, gradio as gr
+import os, re, gradio as gr, time, subprocess
+from google import genai
 
 REPO_DIR = os.path.dirname(os.path.abspath(__file__))
 SPONSORS = os.path.join(REPO_DIR, "Sponsors", "README.md")
+LEARNINGS = os.path.join(REPO_DIR, "LEARNINGS.md")
+KEY = os.environ.get("GEMINI_KEY", "")
+client = genai.Client(api_key=KEY) if KEY else None
 
-SYSTEM = """আপনি RYUK — Batch Day 52 স্পন্সর টিমের অ্যাসিস্টেন্ট।
-আপনি শুধু Batch Day 52 এর ডাটা নিয়ে কথা বলবেন: স্পন্সর, মেম্বার, শিডিউল, ইভেন্ট, ডক।
-অন্য কোনো ব্যক্তিগত তথ্য নাই আপনার কাছে — সেটা বলে দেবেন।
-টিম মেম্বারদের স্পন্সর স্ট্যাটাস আপডেট করতে সাহায্য করুন।
-উত্তর সংক্ষিপ্ত ও বাংলায় দিন (ইংরেজি টার্ম ব্যবহার যায়)।"""
+SYSTEM = """You are RYUK — the Batch Day 52 team assistant (AI teammate version).
+You ONLY discuss Batch Day 52 data: sponsors, members, schedule, events, documents.
+You do NOT have access to any personal/private workspace data (loans, personal tasks) — if asked, say you don't have that.
+You can read and UPDATE sponsor status. When a user reports a sponsor update, update the file.
+You also LEARN: when the team shares new insights, contact preferences, deal context, or anything useful, append it to the LEARNINGS file (via the tool) so it persists.
+Respond in Bangla (English terms OK). Be concise, helpful, proactive.
+When giving analysis, use the actual data. Suggest next steps for follow-ups."""
+
+def read_learnings():
+    if not os.path.exists(LEARNINGS):
+        return ""
+    with open(LEARNINGS, encoding="utf-8") as f:
+        return f.read()
+
+def append_learning(text):
+    now = time.strftime("%Y-%m-%d %H:%M")
+    with open(LEARNINGS, "a", encoding="utf-8") as f:
+        f.write(f"\n- [{now}] {text}\n")
+    # backup to git
+    try:
+        subprocess.run(["git", "-C", REPO_DIR, "add", "-A"], capture_output=True)
+        subprocess.run(["git", "-C", REPO_DIR, "commit", "-q", "-m", f"learning {now}"], capture_output=True)
+        subprocess.run(["git", "-C", REPO_DIR, "push", "-q", "origin", "main"], capture_output=True)
+    except Exception:
+        pass
+
+def backup_sponsors():
+    try:
+        subprocess.run(["git", "-C", REPO_DIR, "add", "-A"], capture_output=True)
+        subprocess.run(["git", "-C", REPO_DIR, "commit", "-q", "-m", "sponsor update"], capture_output=True)
+        subprocess.run(["git", "-C", REPO_DIR, "push", "-q", "origin", "main"], capture_output=True)
+    except Exception:
+        pass
 
 def read_sponsors():
     if not os.path.exists(SPONSORS):
@@ -21,9 +53,7 @@ def read_sponsors():
         return f.read()
 
 def update_sponsor_status(name, status):
-    """Update a sponsor's status in the README."""
     txt = read_sponsors()
-    # find sponsor block
     pattern = re.compile(r"(##\s*" + re.escape(name) + r".*?)(?=## |\Z)", re.S)
     m = pattern.search(txt)
     if not m:
@@ -35,42 +65,50 @@ def update_sponsor_status(name, status):
         f.write(txt)
     return f"✅ {name} স্ট্যাটাস '{status}' আপডেট হয়েছে।"
 
-def parse_cmd(msg):
-    """Detect update commands like 'RAK Contacted' or 'update Remark Negotiating'."""
-    m = re.search(r"(?:update\s+)?([A-Za-z][\w\s]*?)\s+(Contacted|Negotiating|Confirmed|Signed|Lead|Lost|Paid)", msg, re.I)
+def parse_update(msg):
+    """Detect: 'RAK Contacted' or 'Remark Negotiating' or 'update X status Y'."""
+    m = re.search(r"(?:update\s+)?([A-Za-z][\w\s&.]*?)\s+(?:কে\s+)?(Contacted|Negotiating|Confirmed|Signed|Lead|Lost|Paid)", msg, re.I)
     if m:
         return m.group(1).strip(), m.group(2).capitalize()
     return None
 
+def gemini(prompt):
+    import time
+    for i in range(3):
+        try:
+            return client.models.generate_content(model="gemini-flash-latest", contents=prompt).text.strip()
+        except Exception as e:
+            if "503" in str(e) and i < 2:
+                time.sleep(4)
+                continue
+            return "⚠️ Gemini এরর: " + str(e)[:120]
+    return "⚠️ Gemini রিট্রাই ফেইল।"
+
 def respond(message, history):
-    msg = message.strip()
-    # command: update sponsor status
-    cmd = parse_cmd(msg)
+    if not client:
+        return "⚠️ Gemini API key সেট নাই।"
+    cmd = parse_update(message)
     if cmd:
-        return update_sponsor_status(*cmd)
-    # read query
+        result = update_sponsor_status(*cmd)
+        backup_sponsors()  # persist + git backup
+        data = read_sponsors()
+        learn = read_learnings()
+        prompt = f"{SYSTEM}\n\n[Learnings so far]\n{learn}\n\n[Sponsor file]\n{data}\n\n[User] {message}\n[System action] {result}\nConfirm to user in Bangla + suggest next step."
+        return gemini(prompt)
     data = read_sponsors()
-    # simple keyword summary
-    if any(k in msg.lower() for k in ["কে কে", "list", "স্ট্যাটাস", "লিস্ট", "who"]):
-        blocks = re.findall(r"^##\s+([A-Za-z][\w\s&.\(\)]*?)\s*$", data, re.M)
-        sponsors = [b for b in blocks if b not in ("স্পন্সর লিস্ট", "প্রপোজাল লিস্ট", "মিটিং লিস্ট", "কী কী ট্র্যাক করবেন", "Sponsor টেমপ্লেট", "Proposal টেমপ্লেট", "Meeting টেমপ্লেট", "পাইপলাইন (স্টেজ)")]
-        found = []
-        for s in sponsors:
-            sm = re.search(r"##\s*" + re.escape(s) + r".*?স্ট্যাটাস:\s*(\w+)", data, re.S)
-            st = sm.group(1) if sm else "?"
-            found.append(f"- {s}: {st}")
-        return "📋 স্পন্সর লিস্ট:\n" + "\n".join(found)
-    # default: echo context (lightweight, no LLM to keep free/HF-friendly)
-    return (SYSTEM + "\n\n[কুয়েরি] " + msg + "\n\n"
-            "বর্তমান স্পন্সর ডাটা:\n" + data[:1500] +
-            "\n\n💡 আপডেট করতে লিখুন: 'RAK Contacted' বা 'Remark Negotiating'")
+    learn = read_learnings()
+    # detect learning intent
+    if any(k in message.lower() for k in ["জানলাম", "শিখলাম", "নোট", "মনে রাখবে", "learned", "note"]):
+        append_learning(message)
+    prompt = f"{SYSTEM}\n\n[Learnings so far]\n{learn}\n\n[Sponsor file]\n{data}\n\n[User] {message}"
+    return gemini(prompt)
 
 demo = gr.ChatInterface(
     respond,
-    title="🎓 Batch Day 52 — RYUK Team Hub",
-    description="টিম মেম্বারদের জন্য স্পন্সর/শিডিউল হাব। শুধু Batch Day 52 ডাটা। উদাহরণ: 'RAK Contacted' বা 'কে কে স্পন্সর?'",
-    examples=["কে কে স্পন্সর?", "RAK Contacted", "Remark Negotiating", "Pran এর স্ট্যাটাস কী?"],
+    title="🎓 Batch Day 52 — RYUK Team Hub (AI)",
+    description="টিম মেম্বারদের জন্য RYUK (AI স্পন্সর অ্যাসিস্টেন্ট)। শুধু Batch Day 52 ডাটা। উদাহরণ: 'কে কে স্পন্সর?', 'RAK Contacted', 'Remark deal final হয়েছে'",
+    examples=["কে কে স্পন্সর এখনো Contacted না?", "RAK কল হয়ে গেছে", "Remark deal final করো", "পরবর্তী ফলোআপ কী?"],
 )
 
 if __name__ == "__main__":
-    demo.launch()
+    demo.launch(share=True)
