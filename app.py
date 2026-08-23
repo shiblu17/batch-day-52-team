@@ -52,8 +52,14 @@ def respond(message, history):
     data = read_sponsors()
     # simple keyword summary
     if any(k in msg.lower() for k in ["কে কে", "list", "স্ট্যাটাস", "লিস্ট", "who"]):
-        lines = [l for l in data.split("\n") if l.startswith("## ") and "স্পন্সর লিস্ট" not in l and "প্রপোজাল" not in l]
-        return "📋 স্পন্সর লিস্ট:\n" + "\n".join(lines[:15])
+        blocks = re.findall(r"^##\s+([A-Za-z][\w\s&.\(\)]*?)\s*$", data, re.M)
+        sponsors = [b for b in blocks if b not in ("স্পন্সর লিস্ট", "প্রপোজাল লিস্ট", "মিটিং লিস্ট", "কী কী ট্র্যাক করবেন", "Sponsor টেমপ্লেট", "Proposal টেমপ্লেট", "Meeting টেমপ্লেট", "পাইপলাইন (স্টেজ)")]
+        found = []
+        for s in sponsors:
+            sm = re.search(r"##\s*" + re.escape(s) + r".*?স্ট্যাটাস:\s*(\w+)", data, re.S)
+            st = sm.group(1) if sm else "?"
+            found.append(f"- {s}: {st}")
+        return "📋 স্পন্সর লিস্ট:\n" + "\n".join(found)
     # default: echo context (lightweight, no LLM to keep free/HF-friendly)
     return (SYSTEM + "\n\n[কুয়েরি] " + msg + "\n\n"
             "বর্তমান স্পন্সর ডাটা:\n" + data[:1500] +
